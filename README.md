@@ -21,7 +21,7 @@ kinesis:
       # Subject the translated message will be publish to. If this
       # the messages must be persisted, streams must be created ahead
       # of time with this subject being mapped or bound to.
-      subject: "sensor-data.{{data.facility_code}}.{{data.pointid}}.{{data.tagname}}"
+      subject: "sensor-data.{{.Data.facility_code}}.{{.Data.pointid}}"
 ```
 
 ### Subject
@@ -48,3 +48,5 @@ Multiple instances can be used to scale. There are three events that can occur:
 - An instance joins
 - An instance leaves
 - The partitions change
+
+TODO
