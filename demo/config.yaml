@@ -1,0 +1,5 @@
+kinesis:
+  test-stream:
+    encoding: json
+    nats:
+      subject: "sensor-data.{{.Data.facility_code}}.{{.Data.pointid}}"

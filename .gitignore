@@ -1,0 +1,4 @@
+demo/tf/.terraform
+demo/tf/terraform.tfstate
+demo/tf/terraform.tfstate.backup
+demo/tf/.terraform.lock.hcl
