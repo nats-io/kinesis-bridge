@@ -37,9 +37,12 @@ The subject supports the following template variables:
 
 When a message is republished to NATS, the following headers are set:
 
-- `Nats-Msg-Id` - The unique ID of the message in terms of stream, shard, and sequence.
+- `Kinesis-Stream-Name` - Name of the stream the message was from.
+- `Kinesis-Shard-Id` - ID of the shard the record was stored in.
 - `Kinesis-Partition-Key` - Partition key of the record.
+- `Kinesis-Sequence-Number` - Sequence number of the message within the shard.
 - `Kinesis-Arrival-Timestamp` - The arrival timestamp of the record within the stream.
+- `Nats-Msg-Id` - Hash of the stream name, shard, partition key, and sequence number.
 
 ## Load Balancing
 

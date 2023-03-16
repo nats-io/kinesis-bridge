@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -26,7 +28,10 @@ import (
 )
 
 const (
+	HdrKinesisStreamName       = "Kinesis-Stream-Name"
+	HdrKinesisShardId          = "Kinesis-Shard-Id"
 	HdrKinesisPartitionKey     = "Kinesis-Partition-Key"
+	HdrKinesisSequenceNumber   = "Kinesis-Sequence-Number"
 	HdrKinesisArrivalTimestamp = "Kinesis-Arrival-Timestamp"
 
 	defaultBatchSize = 1000
@@ -85,7 +90,7 @@ func (c *Config) Validate() error {
 		}
 
 		if k.NATS.Subject == "" {
-			k.NATS.Subject = "{{.StreamName}}"
+			k.NATS.Subject = "{{.StreamName}}.{{.ShardID}}.{{.PartitionKey}}"
 		}
 
 		nt, err := template.New("subject").Parse(k.NATS.Subject)
@@ -382,6 +387,7 @@ func (s *ShardReader) Run(ctx context.Context) error {
 	s.pw.AppendTracker(t)
 
 	var lastSeq string
+	h := sha256.New()
 
 	for {
 		msgs := msgs[:0]
@@ -415,9 +421,15 @@ func (s *ShardReader) Run(ctx context.Context) error {
 
 				subject := subBuf.String()
 
+				h.Reset()
+				h.Write([]byte(fmt.Sprintf("%s|%s|%s|%s", s.streamName, s.shardId, aws.ToString(r.PartitionKey), aws.ToString(r.SequenceNumber))))
+
 				msg := nats.NewMsg(subject)
-				msg.Header.Set(nats.MsgIdHdr, fmt.Sprintf("%s|%s|%s", s.streamName, s.shardId, aws.ToString(r.SequenceNumber)))
+				msg.Header.Set(nats.MsgIdHdr, hex.EncodeToString(h.Sum(nil)))
+				msg.Header.Set(HdrKinesisStreamName, s.streamName)
+				msg.Header.Set(HdrKinesisShardId, s.shardId)
 				msg.Header.Set(HdrKinesisPartitionKey, aws.ToString(r.PartitionKey))
+				msg.Header.Set(HdrKinesisSequenceNumber, aws.ToString(r.SequenceNumber))
 				msg.Header.Set(HdrKinesisArrivalTimestamp, r.ApproximateArrivalTimestamp.String())
 				msg.Data = r.Data
 
