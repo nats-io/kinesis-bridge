@@ -27,6 +27,9 @@ import (
 	"github.com/nats-io/jsm.go/natscontext"
 	"github.com/nats-io/nats.go"
 	"gopkg.in/yaml.v3"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 const (
@@ -135,12 +138,7 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func ReadConfig(path string) (*Config, error) {
-	b, err := ioutil.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("config read: %w", err)
-	}
-
+func ParseConfig(b []byte) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("config unmarshal: %w", err)
@@ -153,6 +151,15 @@ func ReadConfig(path string) (*Config, error) {
 	return &c, nil
 }
 
+func ReadConfig(path string) (*Config, error) {
+	b, err := ioutil.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("config read: %w", err)
+	}
+
+	return ParseConfig(b)
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -162,12 +169,14 @@ func main() {
 
 func run() error {
 	var (
-		noProgress bool
-		batchSize  int
+		noProgress  bool
+		batchSize   int
+		enablePprof bool
 	)
 
 	flag.BoolVar(&noProgress, "no-progress", false, "Disable progress rendering.")
 	flag.IntVar(&batchSize, "batch-size", 0, "Number of records to fetch and publish per shard.")
+	flag.BoolVar(&enablePprof, "pprof", false, "Enable pprof.")
 
 	flag.Parse()
 
@@ -244,6 +253,10 @@ func run() error {
 		defer pw.Stop()
 	}
 
+	if enablePprof {
+		go http.ListenAndServe("localhost:6060", nil)
+	}
+
 	for sn, sc := range c.Kinesis {
 		shards := topicShards[sn]
 
@@ -294,7 +307,7 @@ func run() error {
 }
 
 // getShards returns all shards for a given stream. This will be used
-func getShards(ctx context.Context, kc *kinesis.Client, streamName string) ([]types.Shard, error) {
+func getShards(ctx context.Context, kc KinesisClient, streamName string) ([]types.Shard, error) {
 	var shards []types.Shard
 
 	in := &kinesis.ListShardsInput{
@@ -324,7 +337,7 @@ func getShards(ctx context.Context, kc *kinesis.Client, streamName string) ([]ty
 
 type ShardReader struct {
 	batchSize  int
-	kc         *kinesis.Client
+	kc         KinesisClient
 	nc         *nats.Conn
 	js         nats.JetStreamContext
 	kv         nats.KeyValue
@@ -342,6 +355,9 @@ type ShardReader struct {
 	td         *subjectTemplateData
 	subBuf     *bytes.Buffer
 	lastSeq    string
+
+	maxCount int
+	count    int
 }
 
 // TODO: apply locking by shard to prevent multiple handlers.
@@ -485,6 +501,7 @@ func (s *ShardReader) prepareMsg(r *types.Record) *nats.Msg {
 
 func (s *ShardReader) publishAndAckMsgs(records []types.Record) error {
 	n := len(records)
+	s.count += n
 
 	for n > 0 {
 		// Grab a slice of the records to publish.
@@ -515,6 +532,7 @@ func (s *ShardReader) publishAndAckMsgs(records []types.Record) error {
 		s.setSequence(lastSeq)
 
 		n -= i
+		records = records[i:]
 	}
 
 	return nil
@@ -553,8 +571,12 @@ func (s *ShardReader) Run(ctx context.Context) error {
 	}
 
 	for {
+		if s.maxCount > 0 && s.count >= s.maxCount {
+			break
+		}
+
 		out, err := s.kc.GetRecords(ctx, in)
-		if errors.Is(err, context.Canceled) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return nil
 		}
 		if err != nil {
@@ -580,4 +602,10 @@ func (s *ShardReader) Run(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+type KinesisClient interface {
+	GetRecords(ctx context.Context, params *kinesis.GetRecordsInput, optFns ...func(*kinesis.Options)) (*kinesis.GetRecordsOutput, error)
+	GetShardIterator(ctx context.Context, params *kinesis.GetShardIteratorInput, optFns ...func(*kinesis.Options)) (*kinesis.GetShardIteratorOutput, error)
+	ListShards(ctx context.Context, params *kinesis.ListShardsInput, optFns ...func(*kinesis.Options)) (*kinesis.ListShardsOutput, error)
 }
