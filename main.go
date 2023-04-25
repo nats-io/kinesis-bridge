@@ -151,7 +151,7 @@ func (c *Config) Validate() error {
 	}
 
 	if c.NATS.Bucket == "" {
-		c.NATS.Bucket = defauttBucketName
+		c.NATS.Bucket = defaultBucketName
 	}
 
 	if c.BatchSize == 0 {
@@ -425,7 +425,7 @@ func (s *ShardReader) getShardIterator(ctx context.Context) (string, error) {
 
 	// No existing sequence, start with the configured start position.
 	if seq == "" {
-		if s.startPosition == "earliest" {
+		if s.startPosition == "oldest" {
 			in.ShardIteratorType = types.ShardIteratorTypeTrimHorizon
 		} else {
 			in.ShardIteratorType = types.ShardIteratorTypeLatest
