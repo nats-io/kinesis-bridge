@@ -1,12 +1,10 @@
-# NATS-AWS Kinesis Bridge
+# Kinesis-NATS Bridge
 
-The is a standalone program that bridges NATS and AWS Kinesis streams.
+The is a standalone program that reads records from AWS Kinesis streams and publishes them to NATS streams.
 
 ## Configuration
 
-A configuration file is used to model the translation from the stream source to sink.
-
-Here is a simple example:
+A configuration file is used to delcare the Kinesis streams and their mapping to a NATS stream. Here is an example:
 
 ```yaml
 nats:
@@ -80,3 +78,7 @@ $ nats stream add --subjects "sensor-data.>" --replicas 3 --max-age "24h" sensor
 ```
 $ nats kv add --replicas 3 kinesis-bridge
 ```
+
+### AWS credentials
+
+The official Go SDK for AWS and Kinesis is used. The default configuration loader will use the standard `AWS_*` environment variables if defined, otherwise it will fallback to the `default` profile in `~/.aws`.
