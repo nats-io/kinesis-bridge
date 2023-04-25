@@ -39,8 +39,10 @@ const (
 	HdrKinesisSequenceNumber   = "Kinesis-Sequence-Number"
 	HdrKinesisArrivalTimestamp = "Kinesis-Arrival-Timestamp"
 
-	// Max get batch size
-	defaultGetBatchSize     = 10_000
+	// Default to the max get batch size for each shard.
+	defaultShardBatchSize = 10_000
+
+	// Default to 100 messages per async publish per shard.
 	defaultPublishBatchSize = 100
 )
 
@@ -58,11 +60,11 @@ type subjectTemplateData struct {
 
 type StreamNATSConfig struct {
 	// NATS subject to send messages to.
-	Subject string
+	Subject string `yaml:"subject"`
 
 	// Subject to send messages that could not parse properly.
 	// This should be a subject bound to the same stream.
-	DLQ string
+	DLQ string `yaml:"dlq"`
 
 	subjectT *template.Template
 	dlqT     *template.Template
@@ -70,29 +72,34 @@ type StreamNATSConfig struct {
 
 type StreamConfig struct {
 	// This can be "json" or "" (empty string) indicating it is opaque.
-	Encoding string
+	Encoding string `yaml:"encoding"`
 
 	// Optional pre-defined list of shards on the stream. If not
 	// provided, the stream will be queried for the list of shards
 	// and all shards will be fanned-in to the NATS subject.
-	Shards []int
+	Shards []int `yaml:"shards"`
 
-	NATS *StreamNATSConfig
+	// Optional starting position for shards. Options are "new" to start *after*
+	// last message in the shard or "oldest" to start with the earliest message
+	// in each shard.
+	StartPosition string `yaml:"start_position"`
+
+	NATS *StreamNATSConfig `yaml:"nats"`
 }
 
 type NATSConfig struct {
-	Context string
+	Context string `yaml:"context"`
 }
 
 type Config struct {
 	// Map of streams by name
-	Kinesis map[string]*StreamConfig
+	Kinesis map[string]*StreamConfig `yaml:"kinesis"`
 
 	// NATS config for the entire process.
-	NATS *NATSConfig
+	NATS *NATSConfig `yaml:"nats"`
 
 	// BatchSize should be set relative to the expected number of shards.
-	BatchSize int
+	BatchSize int `yaml:"batch_size"`
 }
 
 func (c *Config) Validate() error {
@@ -103,6 +110,13 @@ func (c *Config) Validate() error {
 			k.Encoding = "bytes"
 		default:
 			return fmt.Errorf(`invalid encoding: %q. must be "bytes" (default) or "json"`, k.Encoding)
+		}
+
+		// Default to new records.
+		if k.StartPosition == "" {
+			k.StartPosition = "new"
+		} else if k.StartPosition != "new" && k.StartPosition != "oldest" {
+			return fmt.Errorf(`invalid start position: %q. must be "new" (default) or "oldest"`, k.StartPosition)
 		}
 
 		if k.NATS == nil {
@@ -268,17 +282,18 @@ func run() error {
 			js, _ := nc.JetStream()
 
 			s := &ShardReader{
-				batchSize:  c.BatchSize,
-				streamName: sn,
-				kv:         kv,
-				pw:         pw,
-				kc:         kc,
-				nc:         nc,
-				js:         js,
-				nst:        sc.NATS.subjectT,
-				dlq:        sc.NATS.dlqT,
-				shardId:    sid,
-				encoding:   sc.Encoding,
+				startPosition: sc.StartPosition,
+				batchSize:     c.BatchSize,
+				streamName:    sn,
+				kv:            kv,
+				pw:            pw,
+				kc:            kc,
+				nc:            nc,
+				js:            js,
+				nst:           sc.NATS.subjectT,
+				dlq:           sc.NATS.dlqT,
+				shardId:       sid,
+				encoding:      sc.Encoding,
 			}
 
 			go func(s *ShardReader) {
@@ -336,25 +351,26 @@ func getShards(ctx context.Context, kc KinesisClient, streamName string) ([]type
 }
 
 type ShardReader struct {
-	batchSize  int
-	kc         KinesisClient
-	nc         *nats.Conn
-	js         nats.JetStreamContext
-	kv         nats.KeyValue
-	pw         progress.Writer
-	nst        *template.Template
-	dlq        *template.Template
-	encoding   string
-	streamName string
-	shardId    string
-	errch      chan error
-	kvSeq      uint64
-	msgs       []*nats.Msg
-	pfs        []nats.PubAckFuture
-	h          hash.Hash
-	td         *subjectTemplateData
-	subBuf     *bytes.Buffer
-	lastSeq    string
+	startPosition string
+	batchSize     int
+	kc            KinesisClient
+	nc            *nats.Conn
+	js            nats.JetStreamContext
+	kv            nats.KeyValue
+	pw            progress.Writer
+	nst           *template.Template
+	dlq           *template.Template
+	encoding      string
+	streamName    string
+	shardId       string
+	errch         chan error
+	kvSeq         uint64
+	msgs          []*nats.Msg
+	pfs           []nats.PubAckFuture
+	h             hash.Hash
+	td            *subjectTemplateData
+	subBuf        *bytes.Buffer
+	lastSeq       string
 
 	maxCount int
 	count    int
@@ -400,8 +416,13 @@ func (s *ShardReader) getShardIterator(ctx context.Context) (string, error) {
 		StreamName: aws.String(s.streamName),
 	}
 
+	// No existing sequence, start with the configured start position.
 	if seq == "" {
-		in.ShardIteratorType = types.ShardIteratorTypeTrimHorizon
+		if s.startPosition == "earliest" {
+			in.ShardIteratorType = types.ShardIteratorTypeTrimHorizon
+		} else {
+			in.ShardIteratorType = types.ShardIteratorTypeLatest
+		}
 	} else {
 		in.ShardIteratorType = types.ShardIteratorTypeAfterSequenceNumber
 		in.StartingSequenceNumber = aws.String(seq)
@@ -566,7 +587,7 @@ func (s *ShardReader) Run(ctx context.Context) error {
 	}
 
 	in := &kinesis.GetRecordsInput{
-		Limit:         aws.Int32(int32(defaultGetBatchSize)),
+		Limit:         aws.Int32(int32(defaultShardBatchSize)),
 		ShardIterator: aws.String(si),
 	}
 
