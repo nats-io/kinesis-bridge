@@ -9,6 +9,15 @@ A configuration file is used to model the translation from the stream source to 
 Here is a simple example:
 
 ```yaml
+nats:
+  # Optional NATS context to use which declares the configuration
+  # to connect and authenticate with NATS.
+  context: "kinesis-bridge"
+
+  # Name of the KV bucket used to store shard offsets per stream. This
+  # can be shared across all streams.
+  bucket: "kinesis-bridge"
+
 kinesis:
   # Each key is a stream name.
   sensor-data:
@@ -16,15 +25,23 @@ kinesis:
     # the properties will be accessible.
     encoding: json
 
+    # Start position for shards when initialized. "earliest" or "new" (default).
+    start_position: new
+
     # Declares the corresponding NATS configuration.
     nats:
-      # Subject the translated message will be publish to. If this
-      # the messages must be persisted, streams must be created ahead
-      # of time with this subject being mapped or bound to.
+      # The subject to publish a message to. This can be a concrete subject
+      # like "sensor-data", but template variables are also supported (see below).
       subject: "sensor-data.{{.Data.facility_code}}.{{.Data.pointid}}"
+
+      # Subject to publish if a record cannot be parsed and published to
+      # the standard subject.
+      dlq: "sensor-data.dlq"
 ```
 
 ### Subject
+
+The defined subject and DLQ subject must be bound to a stream.
 
 The subject supports the following template variables:
 
@@ -44,12 +61,22 @@ When a message is republished to NATS, the following headers are set:
 - `Kinesis-Arrival-Timestamp` - The arrival timestamp of the record within the stream.
 - `Nats-Msg-Id` - Hash of the stream name, shard, partition key, and sequence number.
 
-## Load Balancing
+## Setup
 
-Multiple instances can be used to scale. There are three events that can occur:
+Before running the bridge, the streams and KV bucket must be created that match the configuration.
 
-- An instance joins
-- An instance leaves
-- The partitions change
+### Create a stream
 
-TODO
+The subjects specified in the configuration must be bound to a NATS stream. For example, a stream `sensor-data` could be created with a subject `sensor-data.>` which will match the messages that are successfully parsed as well as the ones needing to going into the DLQ subject.
+
+To create the stream, use `nats stream add`. You will be prompted for each option, however three options that are important to define are the subjects, the replicas, and limits such as max age.
+
+```
+$ nats stream add --subjects "sensor-data.>" --replicas 3 --max-age "24h" sensor-data
+```
+
+### Create a KV bucket
+
+```
+$ nats kv add --replicas 3 kinesis-bridge
+```

@@ -44,6 +44,9 @@ const (
 
 	// Default to 100 messages per async publish per shard.
 	defaultPublishBatchSize = 100
+
+	// Default bucket name.
+	defaultBucketName = "kinesis-bridge"
 )
 
 func sleepJitter(d time.Duration, factor float64) {
@@ -89,6 +92,8 @@ type StreamConfig struct {
 
 type NATSConfig struct {
 	Context string `yaml:"context"`
+
+	Bucket string `yaml:"bucket"`
 }
 
 type Config struct {
@@ -143,6 +148,10 @@ func (c *Config) Validate() error {
 
 	if c.NATS == nil {
 		c.NATS = &NATSConfig{}
+	}
+
+	if c.NATS.Bucket == "" {
+		c.NATS.Bucket = defauttBucketName
 	}
 
 	if c.BatchSize == 0 {
@@ -229,10 +238,8 @@ func run() error {
 		return fmt.Errorf("nats jetstream: %w", err)
 	}
 
-	// Create a bucket to store the shard offsets.
-	kv, err := js.CreateKeyValue(&nats.KeyValueConfig{
-		Bucket: "kinesis",
-	})
+	// Get the KV bucket used to stored the shard offsets.
+	kv, err := js.KeyValue(c.NATS.Bucket)
 	if err != nil {
 		return fmt.Errorf("nats kv: %w", err)
 	}
