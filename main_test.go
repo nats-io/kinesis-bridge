@@ -88,6 +88,7 @@ const (
 kinesis:
   test-stream:
     encoding: json
+		start_position: earliest
     nats:
       subject: "sensor-data.{{.Data.facility_code}}.{{.Data.pointid}}"
       dlq: "sensor-data.dlq"
