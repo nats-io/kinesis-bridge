@@ -1,4 +1,4 @@
-module github.com/nats-io/nats-kinesis-bridge
+module github.com/nats-io/kinesis-bridge
 
 go 1.20
 
@@ -37,7 +37,6 @@ require (
 	github.com/niemeyer/pretty v0.0.0-20200227124842-a10e7caefd8e // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
 	github.com/stretchr/testify v1.8.0 // indirect
-	go.uber.org/automaxprocs v1.5.2 // indirect
 	golang.org/x/crypto v0.8.0 // indirect
 	golang.org/x/sys v0.7.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
